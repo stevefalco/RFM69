@@ -106,6 +106,7 @@ bool RFM69::initialize(uint8_t freqBand, uint8_t nodeID, uint8_t networkID)
   if (millis()-start >= timeout)
     return false;
   _inISR = false;
+  SPI.usingInterrupt(_interruptNum);
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
   selfPointer = this;
