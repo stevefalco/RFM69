@@ -36,7 +36,6 @@ volatile uint8_t RFM69::PAYLOADLEN;
 volatile uint8_t RFM69::ACK_REQUESTED;
 volatile uint8_t RFM69::ACK_RECEIVED; // should be polled immediately after sending a packet with ACK request
 volatile int16_t RFM69::RSSI;          // most accurate RSSI during reception (closest to the reception)
-volatile bool RFM69::_inISR;
 RFM69* RFM69::selfPointer;
 
 bool RFM69::initialize(uint8_t freqBand, uint8_t nodeID, uint8_t networkID)
@@ -105,7 +104,6 @@ bool RFM69::initialize(uint8_t freqBand, uint8_t nodeID, uint8_t networkID)
   while (((readReg(REG_IRQFLAGS1) & RF_IRQFLAGS1_MODEREADY) == 0x00) && millis()-start < timeout); // wait for ModeReady
   if (millis()-start >= timeout)
     return false;
-  _inISR = false;
   SPI.usingInterrupt(_interruptNum);
   attachInterrupt(_interruptNum, RFM69::isr0, RISING);
 
@@ -351,7 +349,7 @@ void RFM69::interruptHandler() {
 }
 
 // internal function
-void RFM69::isr0() { _inISR = true; selfPointer->interruptHandler(); _inISR = false; }
+void RFM69::isr0() { selfPointer->interruptHandler(); }
 
 // internal function
 void RFM69::receiveBegin() {
@@ -435,30 +433,18 @@ void RFM69::writeReg(uint8_t addr, uint8_t value)
   unselect();
 }
 
+SPISettings rfm69_SPI_settings(2000000, MSBFIRST, SPI_MODE0);
+
 // select the RFM69 transceiver (save SPI settings, set CS low)
 void RFM69::select() {
-  noInterrupts();
-#if defined (SPCR) && defined (SPSR)
-  // save current SPI settings
-  _SPCR = SPCR;
-  _SPSR = SPSR;
-#endif
-  // set RFM69 SPI settings
-  SPI.setDataMode(SPI_MODE0);
-  SPI.setBitOrder(MSBFIRST);
-  SPI.setClockDivider(SPI_CLOCK_DIV4); // decided to slow down from DIV2 after SPI stalling in some instances, especially visible on mega1284p when RFM69 and FLASH chip both present
+  SPI.beginTransaction(rfm69_SPI_settings);
   digitalWrite(_slaveSelectPin, LOW);
 }
 
 // unselect the RFM69 transceiver (set CS high, restore SPI settings)
 void RFM69::unselect() {
   digitalWrite(_slaveSelectPin, HIGH);
-  // restore SPI settings to what they were before talking to RFM69
-#if defined (SPCR) && defined (SPSR)
-  SPCR = _SPCR;
-  SPSR = _SPSR;
-#endif
-  maybeInterrupts();
+  SPI.endTransaction();
 }
 
 // true  = disable filtering to capture all frames on network
@@ -785,10 +771,4 @@ void RFM69::rcCalibration()
 {
   writeReg(REG_OSC1, RF_OSC1_RCCAL_START);
   while ((readReg(REG_OSC1) & RF_OSC1_RCCAL_DONE) == 0x00);
-}
-
-inline void RFM69::maybeInterrupts()
-{
-  // Only reenable interrupts if we're not being called from the ISR
-  if (!_inISR) interrupts();
 }
